@@ -3,6 +3,9 @@
 #include <Windows.h>
 #include <tchar.h>
 
+#include "Shader\ps.h"
+#include "Shader\vs.h"
+
 #pragma once
 #pragma comment(lib, "d3d11.lib")
 
@@ -154,6 +157,88 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nCmdShow)
 	vp.Height = 720;
 	vp.MinDepth = 0.0f;
 	vp.MaxDepth = 1.0f;
+	hpDeviceContext->RSSetViewports(1, &vp);
+
+	// 三角形の表示はここから
+	struct Vertex3D
+	{
+		float pos[3];
+		float col[4];
+	};
+
+	const int TYOUTEN = 3;
+
+	// 頂点データ
+	Vertex3D hVectorData[TYOUTEN] = {
+		{ { +0.0f, +0.5f, +0.5f },{ 1.0f, 1.0f, 1.0f, 1.0f } },
+		{ { +0.5f, -0.5f, +0.5f },{ 1.0f, 1.0f, 1.0f, 1.0f } },
+		{ { -0.5f, -0.5f, +0.5f },{ 1.0f, 1.0f, 1.0f, 1.0f } },
+	};
+
+	// 頂点レイアウト
+	// 5番目のパラメータは先頭からのバイト数なので、COLORにはPOSITIONのfloat型＊3を記述
+	D3D11_INPUT_ELEMENT_DESC hInElementDesc[] = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 4*3, D3D11_INPUT_PER_VERTEX_DATA, 0},
+	};
+
+	// 頂点バッファ作成
+	D3D11_BUFFER_DESC hBufferDesc;
+	hBufferDesc.ByteWidth = sizeof(Vertex3D) * TYOUTEN;
+	hBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	hBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	hBufferDesc.CPUAccessFlags = 0;
+	hBufferDesc.MiscFlags = 0;
+	hBufferDesc.StructureByteStride = sizeof(float);
+
+	D3D11_SUBRESOURCE_DATA hSubResourceData;
+	hSubResourceData.pSysMem = hVectorData;
+	hSubResourceData.SysMemPitch = 0;
+	hSubResourceData.SysMemSlicePitch = 0;
+
+	ID3D11Buffer* hpBuffer;
+	if (FAILED(hpDevice->CreateBuffer(&hBufferDesc, &hSubResourceData, &hpBuffer))) {
+		MessageBox(hWnd, _T("CreateBuffer"), _T("Err"), MB_ICONSTOP);
+		goto END;
+	}
+
+	// 頂点バッファをコンテキストに設定
+	UINT hStrides = sizeof(Vertex3D);
+	UINT hOffsets = 0;
+	hpDeviceContext->IASetVertexBuffers(0, 1, &hpBuffer, &hStrides, &hOffsets);
+
+	// プリミティブ(ポリゴンの形状)をコンテキストに設定
+	hpDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	// 頂点レイアウト作成
+	ID3D11InputLayout* hpInputLayout = NULL;
+	if (FAILED(hpDevice->CreateInputLayout(hInElementDesc, ARRAYSIZE(hInElementDesc), &g_vs_main, sizeof(g_vs_main), &hpInputLayout))) {
+		MessageBox(hWnd, _T("CreateInputLayout"), _T("Err"), MB_ICONSTOP);
+		goto END;
+	}
+
+	// 頂点レイアウトをコンテキストに作成
+	hpDeviceContext->IASetInputLayout(hpInputLayout);
+
+	// 頂点シェーダ生成
+	ID3D11VertexShader* hpVertexShader;
+	if (FAILED(hpDevice->CreateVertexShader(&g_vs_main, sizeof(g_vs_main), NULL, &hpVertexShader))) {
+		MessageBox(hWnd, _T("CreateVertexShader"), _T("Err"), MB_ICONSTOP);
+		goto END;
+	}
+
+	// 頂点シェーダをコンテキストに設定
+	hpDeviceContext->VSSetShader(hpVertexShader, NULL, 0);
+
+	// ピクセルシェーダを生成
+	ID3D11PixelShader* hpPixelShader;
+	if (FAILED(hpDevice->CreatePixelShader(&g_ps_main, sizeof(g_ps_main), NULL, &hpPixelShader))) {
+		MessageBox(hWnd, _T("CreatePixelShader"), _T("Err"), MB_ICONSTOP);
+		goto END;
+	}
+
+	// ピクセルシェーダをコンテキストに設定
+	hpDeviceContext->PSSetShader(hpPixelShader, NULL, 0);
 
 	// メインループ
 	MSG hMsg;
@@ -166,12 +251,22 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nCmdShow)
 			DispatchMessage(&hMsg);
 		}
 
-		// なにかを描画
+		// 背景描画
 		float ClearColor[]{ 0.0f, 0.0f, 1.0f, 1.0f };
 		hpDeviceContext->ClearRenderTargetView(hpRenderTargetView, ClearColor);
+
+		// 描画
+		hpDeviceContext->Draw(TYOUTEN, 0);
+
+		// バックバッファをスワップ
 		hpDXGISwapChain->Present(0, 0);
 	}
 END:
+	// リリース
+	SAFE_RELEASE(hpPixelShader);
+	SAFE_RELEASE(hpVertexShader);
+	SAFE_RELEASE(hpInputLayout);
+
 	// ポインタで生成したものをリリース
 	SAFE_RELEASE(hpRenderTargetView);
 	SAFE_RELEASE(hpBackFuffer);
@@ -184,76 +279,3 @@ END:
 
 	return 0;
 }
-
-/*
-#include <d3d11.h>
-
-#include <windows.h>
-#include <tchar.h>
-
-
-//まずはウィンドウのコールバック関数を記述
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
-	switch (message) {
-	case WM_CLOSE:
-		PostMessage(hWnd, WM_DESTROY, 0, 0);
-		break;
-	case WM_DESTROY:
-		PostQuitMessage(0);
-		break;
-	}
-
-	return(DefWindowProc(hWnd, message, wParam, lParam));
-}
-
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdLine, int nCmdShow)
-{
-	//ウィンドウクラスを登録して
-	TCHAR szWindowClass[] = "3DDISPPG";
-	WNDCLASS wcex;
-	wcex.style = CS_HREDRAW | CS_VREDRAW;
-	wcex.lpfnWndProc = WndProc;
-	wcex.cbClsExtra = 0;
-	wcex.cbWndExtra = 0;
-	wcex.hInstance = hInstance;
-	wcex.hIcon = NULL;
-	wcex.hCursor = NULL;
-	wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-	wcex.lpszMenuName = NULL;
-	wcex.lpszClassName = szWindowClass;
-	RegisterClass(&wcex);
-
-	//ウィンドウをクリエイト
-	HWND hWnd;
-	hWnd = CreateWindow(szWindowClass,
-		"3D Disp Pg",
-		WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-		0,
-		0,
-		1020,
-		1080,
-		NULL,
-		NULL,
-		hInstance,
-		NULL);
-
-	//後で消すが，とりあえずウィンドウを出さないとわかり辛いので
-	ShowWindow(hWnd, nCmdShow);
-
-	//メインループ
-	MSG hMsg;
-	while (true) {
-		while (PeekMessageW(&hMsg, NULL, 0, 0, PM_REMOVE)) {
-			if (hMsg.message == WM_QUIT) {
-				goto End;
-			}
-			TranslateMessage(&hMsg);
-			DispatchMessage(&hMsg);
-		}
-	}
-
-End:
-	return 0;
-}
-*/
